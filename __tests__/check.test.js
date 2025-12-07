@@ -2,10 +2,10 @@ const { check } = require("../src/check")
 const path = require("path")
 
 describe("single XML file", () => {
-  test("when the result is success", async () => {
+  test("when the results is success", async () => {
     const results = await check({ pathPattern: path.join(__dirname, "xml/success1.xml") })
 
-    expect(results.isPassed).toBe(true)
+    expect(results.status).toEqual("success")
     expect(results.failures.length).toEqual(0)
     expect(results.results.length).toEqual(1)
 
@@ -16,15 +16,16 @@ describe("single XML file", () => {
     expect(result.warnings.length).toEqual(0)
   })
 
-  test("when the result is failure", async () => {
+  test("when the results is error including warning", async () => {
     const results = await check({ pathPattern: path.join(__dirname, "xml/failure1.xml") })
 
-    expect(results.isPassed).toBe(false)
+    expect(results.status).toEqual("error")
     expect(results.failures.length).toEqual(1)
     expect(results.results.length).toEqual(1)
 
     const { result } = results.results[0]
 
+    expect(result.status).toEqual("error")
     expect(result.issues.length).toEqual(2)
 
     expect(result.warnings.length).toEqual(1)
@@ -33,21 +34,43 @@ describe("single XML file", () => {
     expect(result.errors.length).toEqual(1)
     expect(result.errors[0].message).toMatch("The resource `R.color.purple_500` appears to be unused")
   })
+
+  test("when the results is warning only", async () => {
+    const results = await check({ pathPattern: path.join(__dirname, "xml/failure2.xml") })
+
+    expect(results.status).toEqual("warning")
+    expect(results.failures.length).toEqual(1)
+    expect(results.results.length).toEqual(1)
+
+    const { result } = results.results[0]
+
+    expect(result.status).toEqual("warning")
+    expect(result.issues.length).toEqual(1)
+
+    expect(result.warnings.length).toEqual(1)
+    expect(result.warnings[0].message).toMatch("The resource `R.color.purple_700` appears to be unused")
+
+    expect(result.errors.length).toEqual(0)
+  })
 })
 
 describe("multiple XML files", () => {
   test("when the all results are success", async () => {
     const results = await check({ pathPattern: path.join(__dirname, "xml/success*.xml") })
 
-    expect(results.isPassed).toBe(true)
+    expect(results.status).toEqual("success")
     expect(results.failures.length).toEqual(0)
     expect(results.results.length).toEqual(2)
   })
 
   test("when the all results are failure", async () => {
-    const results = await check({ pathPattern: path.join(__dirname, "xml/failure*.xml") })
+    const pathPattern = [
+      path.join(__dirname, "xml/failure1.xml"),
+      path.join(__dirname, "xml/failure2.xml")
+    ]
+    const results = await check({ pathPattern })
 
-    expect(results.isPassed).toBe(false)
+    expect(results.status).toEqual("error")
     expect(results.failures.length).toEqual(2)
     expect(results.results.length).toEqual(2)
   })
@@ -59,46 +82,74 @@ describe("multiple XML files", () => {
     ]
     const results = await check({ pathPattern })
 
-    expect(results.isPassed).toBe(false)
+    expect(results.status).toEqual("error")
     expect(results.failures.length).toEqual(1)
     expect(results.results.length).toEqual(2)
   })
 })
 
-describe("ignoreWarning", () => {
-  test("when true", async () => {
-    const results = await check({ pathPattern: path.join(__dirname, "xml/failure2.xml"), ignoreWarning: true })
-
-    expect(results.isPassed).toBe(true)
-    expect(results.failures.length).toEqual(0)
-    expect(results.results.length).toEqual(1)
+describe("invalid XML file", () => {
+  test("when the XML file can't be found", async () => {
+    await expect(check({ pathPattern: path.join(__dirname, "xml/unknown.xml") }))
+      .rejects.toThrow("No XML file found")
   })
 
-  test("when false", async () => {
-    const results = await check({ pathPattern: path.join(__dirname, "xml/failure2.xml"), ignoreWarning: false })
+  test("when the contents of the XML file is invalid", async () => {
+    await expect(check({ pathPattern: path.join(__dirname, "xml/invalid.xml") }))
+      .rejects.toThrow("Unexpected structure XML file")
+  })
+})
 
-    expect(results.isPassed).toBe(false)
+describe("other XML file formats", () => {
+  test("<issue> with multiple location attributes", async () => {
+    const results = await check({ pathPattern: path.join(__dirname, "xml/failure3.xml") })
+
+    expect(results.status).toEqual("warning")
     expect(results.failures.length).toEqual(1)
     expect(results.results.length).toEqual(1)
+
+    const { result } = results.results[0]
+
+    expect(result.status).toEqual("warning")
+    expect(result.issues.length).toEqual(2)
+
+    expect(result.warnings.length).toEqual(2)
+    expect(result.warnings[0].file).toEqual("/path/to/root/app/src/main/res/values/colors1.xml")
+    expect(result.warnings[1].file).toEqual("/path/to/root/app/src/main/res/values/colors2.xml")
+
+    expect(result.errors.length).toEqual(0)
   })
-})
 
-test("when the XML file can't be found", async () => {
-  await expect(check({ pathPattern: path.join(__dirname, "xml/unknown.xml") }))
-    .rejects.toThrow("No XML file found")
-})
+  test("No errorLine and lineNumber attributes", async () => {
+    const results = await check({ pathPattern: path.join(__dirname, "xml/failure4.xml") })
 
-test("when the contents of the XML file is invalid", async () => {
-  await expect(check({ pathPattern: path.join(__dirname, "xml/invalid.xml") }))
-    .rejects.toThrow("Unexpected structure XML file")
+    expect(results.status).toEqual("warning")
+    expect(results.failures.length).toEqual(1)
+    expect(results.results.length).toEqual(1)
+
+    const { result } = results.results[0]
+
+    expect(result.status).toEqual("warning")
+    expect(result.issues.length).toEqual(1)
+
+    expect(result.warnings.length).toEqual(1)
+    expect(result.errors.length).toEqual(0)
+
+    const issue = result.issues[0]
+
+    expect(issue.id).toEqual("UnusedResources")
+    expect(issue.errorLine1).toBeUndefined()
+    expect(issue.errorLine2).toBeUndefined()
+    expect(issue.lineNumber).toBeUndefined()
+  })
 })
 
 describe("basic glob path pattern", () => {
   test("**/xml/failure*.xml", async () => {
     const results = await check({ pathPattern: "**/xml/failure*.xml" })
 
-    expect(results.isPassed).toBe(false)
-    expect(results.failures.length).toEqual(2)
-    expect(results.results.length).toEqual(2)
+    expect(results.status).toEqual("error")
+    expect(results.failures.length).toEqual(4)
+    expect(results.results.length).toEqual(4)
   })
 })

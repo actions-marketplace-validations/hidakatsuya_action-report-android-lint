@@ -7,11 +7,6 @@ class Issue {
   /**
     * Example of parsed issue:
     * {
-    *   location: {
-    *     '@_file': '/path/to/app/src/main/res/values/colors.xml',
-    *     '@_line': '3',
-    *     '@_column': '12'
-    *   },
     *   '@_id': 'UnusedResources',
     *   '@_severity': 'Warning',
     *   '@_message': 'The resource `R.color.purple_200` appears to be unused',
@@ -20,19 +15,62 @@ class Issue {
     *   '@_summary': 'Unused resources',
     *   '@_explanation': 'Unused resources make applications larger and slow down builds.&#xA;&#xA;&#xA;The unused resource check can ignore tests. If you want to include resources that are only referenced from tests, consider packaging them in a test source set instead.&#xA;&#xA;You can include test sources in the unused resource check by setting the system property lint.unused-resources.include-tests =true, and to exclude them (usually for performance reasons), use lint.unused-resources.exclude-tests =true.&#xA;,',
     *   '@_errorLine1': '    <color name="purple_200">#FFBB86FC</color>',
-    *   '@_errorLine2': '           ~~~~~~~~~~~~~~~~~'
+    *   '@_errorLine2': '           ~~~~~~~~~~~~~~~~~',
+    *   location: {
+    *     '@_file': '/path/to/app/src/main/res/values/colors.xml',
+    *     '@_line': '3',
+    *     '@_column': '12'
+    *   },
+    *   Or
+    *   location: [
+    *     {
+    *       '@_file': '/path/to/app/src/main/res/values/colors.xml',
+    *       '@_line': '3',
+    *       '@_column': '12'
+    *     },
+    *     {
+    *       '@_file': '/path/to/app/src/main/res/values/colors.xml',
+    *       '@_line': '4',
+    *       '@_column': '12'
+    *     }
+    *   ]
     * }
     */
-  constructor(issue) {
-    this.issue = issue
+  static parse(issue) {
+    let locations = issue.location
+    if (!Array.isArray(locations)) locations = Array.of(locations)
+
+    const issues = locations.map(location => {
+      return new Issue({
+        id: issue["@_id"],
+        severity: issue["@_severity"],
+        file: location["@_file"],
+        lineNumber: location["@_line"],
+        message: issue["@_message"],
+        errorLine1: issue["@_errorLine1"],
+        errorLine2: issue["@_errorLine2"]
+      })
+    })
+
+    return issues
   }
 
-  attr(name) {
-    return this.issue[`@_${name}`]
-  }
-
-  get severity() {
-    return this.attr("severity")
+  constructor({
+    id,
+    severity,
+    file,
+    lineNumber,
+    message,
+    errorLine1,
+    errorLine2
+  }) {
+    this.id = id
+    this.severity = severity
+    this.file = file
+    this.lineNumber = lineNumber
+    this.message = message
+    this.errorLine1 = errorLine1
+    this.errorLine2 = errorLine2
   }
 
   get isError() {
@@ -42,38 +80,20 @@ class Issue {
   get isWarning() {
     return this.severity === "Warning"
   }
-
-  get file() {
-    return this.issue.location["@_file"]
-  }
-
-  get lineNumber() {
-    return this.issue.location["@_line"]
-  }
-
-  get message() {
-    return `${this.attr("id")}: ${this.attr("message")}`
-  }
-
-  get errorLine1() {
-    return this.attr("errorLine1")
-  }
-
-  get errorLine2() {
-    return this.attr("errorLine2")
-  }
 }
 
 class Result {
+  #status = null
   #errors = null
   #warnings = null
 
   constructor(issues) {
     this.issues = issues
+    this.#initStatus()
   }
 
-  isPassed(ignoreWarning = false) {
-    return this.errors.length === 0 && (ignoreWarning || this.warnings.length === 0)
+  get status() {
+    return this.#status
   }
 
   get errors() {
@@ -85,23 +105,29 @@ class Result {
     this.#warnings ??= this.issues.filter(issue => issue.isWarning)
     return this.#warnings
   }
+
+  #initStatus() {
+    if (this.errors.length > 0) {
+      this.#status = "error"
+    } else if (this.warnings.length > 0) {
+      this.#status = "warning"
+    } else {
+      this.#status = "success"
+    }
+  }
 }
 
 class Results {
-  constructor(results, ignoreWarning = false) {
+  constructor(results) {
     this.results = results
-    this.failures = results.filter(({ result }) => {
-      return !result.isPassed(ignoreWarning)
-    })
-  }
-
-  get isPassed() {
-    return this.failures.length === 0
+    this.#initStatus()
+    this.#initFailures()
   }
 
   failuresEach(fn) {
     this.failures.forEach(({ path, result }) => {
       const { errors, warnings } = result
+
       fn({
         xmlPath: path,
         errors: this.#groupIssuesByFile(errors),
@@ -113,9 +139,27 @@ class Results {
   #groupIssuesByFile(issues) {
     return group(issues, ({ file }) => file)
   }
+
+  #initStatus() {
+    const statsues = this.results.map(({ result }) => result.status)
+
+    if (statsues.includes("error")) {
+      this.status = "error"
+    } else if (statsues.includes("warning")) {
+      this.status = "warning"
+    } else {
+      this.status = "success"
+    }
+  }
+
+  #initFailures() {
+    this.failures = this.results.filter(({ result }) => {
+      return result.status !== "success"
+    })
+  }
 }
 
-const parse = (xmlData) => {
+function parse(xmlData) {
   const parser = new XMLParser({
     trimValues: false,
     ignoreAttributes: false,
@@ -134,7 +178,7 @@ const parse = (xmlData) => {
     issues = Array.of(issues)
   }
 
-  return new Result(issues.map(i => new Issue(i)))
+  return new Result(issues.flatMap(i => Issue.parse(i)))
 }
 
 async function fetchXML(pathPattern, followSymbolicLinks) {
@@ -148,11 +192,7 @@ async function fetchXML(pathPattern, followSymbolicLinks) {
   })
 }
 
-async function check({
-  pathPattern,
-  ignoreWarning = false,
-  followSymbolicLinks = true
-}) {
+async function check({ pathPattern, followSymbolicLinks = true }) {
   const xmls = await fetchXML(pathPattern, followSymbolicLinks)
 
   if (xmls.length === 0) {
@@ -163,7 +203,7 @@ async function check({
     return { path, result: parse(data) }
   })
 
-  return new Results(results, ignoreWarning)
+  return new Results(results)
 }
 
 module.exports = {

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- contains only warning issues  -->
+<!-- <issue> with multiple location attributes -->
 <issues format="6" by="lint 8.1.0">
 
     <issue
@@ -13,9 +13,13 @@
         errorLine1="    &lt;color name=&quot;purple_700&quot;>#FF3700B3&lt;/color>"
         errorLine2="           ~~~~~~~~~~~~~~~~~">
         <location
-            file="/path/to/root/app/src/main/res/values/colors.xml"
-            line="5"
-            column="12"/>
+            file="/path/to/root/app/src/main/res/values/colors1.xml"
+            line="1"
+            column="10"/>
+        <location
+            file="/path/to/root/app/src/main/res/values/colors2.xml"
+            line="2"
+            column="20"/>
     </issue>
 
 </issues>
